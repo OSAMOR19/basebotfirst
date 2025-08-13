@@ -4,6 +4,7 @@
   "description": "Telegram trading bot for Base blockchain with auto-sniper functionality",
   "main": "src/index.js",
   "scripts": {
+    "setup": "node setup.js",
     "start": "node src/index.js",
     "dev": "nodemon src/index.js",
     "test": "node test-bot.js",

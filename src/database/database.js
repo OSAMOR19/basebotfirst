@@ -231,6 +231,106 @@ class Database {
     return this.run(sql, [status, txHash])
   }
 
+  // Limit Order methods
+  async saveLimitOrder(userId, tokenAddress, orderType, amountEth, targetPrice) {
+    const sql = `INSERT INTO limit_orders (user_id, token_address, order_type, amount_eth, target_price) 
+                     VALUES (?, ?, ?, ?, ?)`
+    return this.run(sql, [userId, tokenAddress, orderType, amountEth, targetPrice])
+  }
+
+  async getActiveLimitOrders(userId = null) {
+    let sql = `SELECT * FROM limit_orders WHERE is_active = 1`
+    let params = []
+    
+    if (userId) {
+      sql += ` AND user_id = ?`
+      params.push(userId)
+    }
+    
+    sql += ` ORDER BY created_at ASC`
+    return this.all(sql, params)
+  }
+
+  async updateLimitOrderStatus(orderId, isActive) {
+    const sql = `UPDATE limit_orders SET is_active = ? WHERE id = ?`
+    return this.run(sql, [isActive ? 1 : 0, orderId])
+  }
+
+  async deleteLimitOrder(orderId) {
+    const sql = `DELETE FROM limit_orders WHERE id = ?`
+    return this.run(sql, [orderId])
+  }
+
+  // DCA Schedule methods
+  async saveDCASchedule(userId, tokenAddress, amountEth, intervalHours) {
+    const nextExecution = new Date(Date.now() + intervalHours * 60 * 60 * 1000)
+    const sql = `INSERT INTO dca_schedules (user_id, token_address, amount_eth, interval_hours, next_execution) 
+                     VALUES (?, ?, ?, ?, ?)`
+    return this.run(sql, [userId, tokenAddress, amountEth, intervalHours, nextExecution.toISOString()])
+  }
+
+  async getActiveDCASchedules(userId = null) {
+    let sql = `SELECT * FROM dca_schedules WHERE is_active = 1`
+    let params = []
+    
+    if (userId) {
+      sql += ` AND user_id = ?`
+      params.push(userId)
+    }
+    
+    sql += ` ORDER BY next_execution ASC`
+    return this.all(sql, params)
+  }
+
+  async getDueDCASchedules() {
+    const sql = `SELECT * FROM dca_schedules WHERE is_active = 1 AND next_execution <= datetime('now')`
+    return this.all(sql)
+  }
+
+  async updateDCANextExecution(scheduleId, nextExecution) {
+    const sql = `UPDATE dca_schedules SET next_execution = ? WHERE id = ?`
+    return this.run(sql, [nextExecution.toISOString(), scheduleId])
+  }
+
+  async updateDCAScheduleStatus(scheduleId, isActive) {
+    const sql = `UPDATE dca_schedules SET is_active = ? WHERE id = ?`
+    return this.run(sql, [isActive ? 1 : 0, scheduleId])
+  }
+
+  async deleteDCASchedule(scheduleId) {
+    const sql = `DELETE FROM dca_schedules WHERE id = ?`
+    return this.run(sql, [scheduleId])
+  }
+
+  // Sniper Target methods
+  async saveSniperTarget(userId, tokenAddress, buyAmountEth, maxGasPrice, slippage) {
+    const sql = `INSERT INTO sniper_targets (user_id, token_address, buy_amount_eth, max_gas_price, slippage) 
+                     VALUES (?, ?, ?, ?, ?)`
+    return this.run(sql, [userId, tokenAddress, buyAmountEth, maxGasPrice, slippage])
+  }
+
+  async getActiveSniperTargets(userId = null) {
+    let sql = `SELECT * FROM sniper_targets WHERE is_active = 1`
+    let params = []
+    
+    if (userId) {
+      sql += ` AND user_id = ?`
+      params.push(userId)
+    }
+    
+    return this.all(sql, params)
+  }
+
+  async updateSniperTargetStatus(targetId, isActive) {
+    const sql = `UPDATE sniper_targets SET is_active = ? WHERE id = ?`
+    return this.run(sql, [isActive ? 1 : 0, targetId])
+  }
+
+  async deleteSniperTarget(targetId) {
+    const sql = `DELETE FROM sniper_targets WHERE id = ?`
+    return this.run(sql, [targetId])
+  }
+
   close() {
     if (this.db) {
       this.db.close()

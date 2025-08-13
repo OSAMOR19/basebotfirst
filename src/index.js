@@ -4,6 +4,7 @@ const Database = require("./database/database")
 const WalletManager = require("./services/walletManager")
 const TradingService = require("./services/tradingService")
 const SniperService = require("./services/sniperService")
+const BackgroundService = require("./services/backgroundService")
 const BotHandlers = require("./handlers/botHandlers")
 const logger = require("./utils/logger")
 require("dotenv").config()
@@ -15,6 +16,12 @@ class BaseTradingBot {
     this.walletManager = new WalletManager()
     this.tradingService = new TradingService()
     this.sniperService = new SniperService()
+    this.backgroundService = new BackgroundService(
+      this.database,
+      this.tradingService,
+      this.walletManager,
+      this.bot
+    )
     this.handlers = new BotHandlers(
       this.bot,
       this.database,
@@ -40,8 +47,12 @@ class BaseTradingBot {
       // Start sniper service
       await this.sniperService.start()
 
+      // Start background service for limit orders and DCA
+      await this.backgroundService.start()
+
       logger.info("Base Trading Bot initialized successfully")
       console.log("🚀 Base Trading Bot is running...")
+      console.log("📱 Find your bot on Telegram and send /start to begin!")
     } catch (error) {
       logger.error("Failed to initialize bot:", error)
       process.exit(1)
@@ -67,6 +78,8 @@ class BaseTradingBot {
     this.bot.onText(/\/positions/, this.handlers.handlePositions.bind(this.handlers))
     this.bot.onText(/\/pnl/, this.handlers.handlePNL.bind(this.handlers))
     this.bot.onText(/\/sniper/, this.handlers.handleSniper.bind(this.handlers))
+    this.bot.onText(/\/limit/, this.handlers.handleLimitOrders.bind(this.handlers))
+    this.bot.onText(/\/dca/, this.handlers.handleDCA.bind(this.handlers))
     this.bot.onText(/\/ref/, this.handlers.handleReferral.bind(this.handlers))
     this.bot.onText(/\/settings/, this.handlers.handleSettings.bind(this.handlers))
 

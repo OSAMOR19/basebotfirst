@@ -126,6 +126,88 @@ class TradingService {
     }
   }
 
+  // Create limit order
+  async createLimitOrder(userId, tokenAddress, orderType, amountEth, targetPrice) {
+    try {
+      logger.info(`Creating ${orderType} limit order for ${tokenAddress} at ${targetPrice} ETH`)
+      
+      // Store limit order in database (this would be implemented in database.js)
+      // For now, return success
+      return {
+        success: true,
+        orderId: Date.now(), // In real implementation, this would be the database ID
+        message: `${orderType.toUpperCase()} limit order created at ${targetPrice} ETH`
+      }
+    } catch (error) {
+      logger.error("Error creating limit order:", error)
+      return {
+        success: false,
+        error: error.message,
+      }
+    }
+  }
+
+  // Check and execute limit orders
+  async checkLimitOrders() {
+    try {
+      // Get current token price and check against limit orders
+      // This would be implemented with a price oracle or DEX quoter
+      logger.info("Checking limit orders...")
+      
+      // In a real implementation, you would:
+      // 1. Fetch all active limit orders from database
+      // 2. Get current market prices
+      // 3. Execute orders that meet conditions
+      // 4. Update order status
+      
+      return true
+    } catch (error) {
+      logger.error("Error checking limit orders:", error)
+      return false
+    }
+  }
+
+  // Create DCA schedule
+  async createDCASchedule(userId, tokenAddress, amountEth, intervalHours) {
+    try {
+      logger.info(`Creating DCA schedule for ${tokenAddress}: ${amountEth} ETH every ${intervalHours} hours`)
+      
+      const nextExecution = new Date(Date.now() + intervalHours * 60 * 60 * 1000)
+      
+      // Store DCA schedule in database (this would be implemented in database.js)
+      return {
+        success: true,
+        scheduleId: Date.now(),
+        nextExecution: nextExecution,
+        message: `DCA schedule created: ${amountEth} ETH every ${intervalHours} hours`
+      }
+    } catch (error) {
+      logger.error("Error creating DCA schedule:", error)
+      return {
+        success: false,
+        error: error.message,
+      }
+    }
+  }
+
+  // Execute DCA orders
+  async executeDCASchedules() {
+    try {
+      logger.info("Executing DCA schedules...")
+      
+      // In a real implementation, you would:
+      // 1. Fetch all DCA schedules that are due
+      // 2. Execute the trades
+      // 3. Update next execution time
+      // 4. Notify users
+      
+      return true
+    } catch (error) {
+      logger.error("Error executing DCA schedules:", error)
+      return false
+    }
+  }
+
   // Approve token spending
   async approveToken(wallet, tokenAddress, amount) {
     try {

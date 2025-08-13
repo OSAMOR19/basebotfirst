@@ -37,7 +37,7 @@ Your secure trading companion for Base blockchain.
 • 💰 Buy/Sell tokens instantly
 • 🎯 Auto-sniper for new launches
 • 📊 Portfolio tracking & PNL
-• 🔄 DCA & Limit orders
+• 📋 Limit orders & DCA
 • 👛 Secure wallet management
 
 *Quick Actions:*
@@ -52,6 +52,10 @@ Your secure trading companion for Base blockchain.
           [
             { text: "🎯 Auto Sniper", callback_data: "sniper_menu" },
             { text: "👛 Wallet", callback_data: "wallet_menu" },
+          ],
+          [
+            { text: "📋 Limit Orders", callback_data: "limit_orders" },
+            { text: "🔄 DCA", callback_data: "dca" },
           ],
           [
             { text: "📊 Positions", callback_data: "positions" },
@@ -408,6 +412,99 @@ Configure your trading preferences:
     })
   }
 
+  // Handle limit orders
+  async handleLimitOrders(msg) {
+    const chatId = msg.chat.id
+    const telegramId = msg.from.id.toString()
+
+    try {
+      const user = await this.db.getUser(telegramId)
+      if (!user) {
+        await this.bot.sendMessage(chatId, "❌ Please start the bot first with /start")
+        return
+      }
+
+      const activeOrders = await this.db.getActiveLimitOrders(user.id)
+
+      let message = "📋 *Limit Orders*\n\n"
+
+      if (activeOrders.length > 0) {
+        message += "*Active Orders:*\n"
+        for (const order of activeOrders) {
+          message += `• ${order.order_type.toUpperCase()} \`${order.token_address.slice(0, 8)}...${order.token_address.slice(-6)}\`\n`
+          message += `  Amount: ${order.amount_eth} ETH\n`
+          message += `  Target: ${order.target_price} ETH\n\n`
+        }
+      } else {
+        message += "No active limit orders.\n\n"
+      }
+
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "➕ Create Buy Order", callback_data: "create_buy_limit" }],
+          [{ text: "➕ Create Sell Order", callback_data: "create_sell_limit" }],
+          [{ text: "🗑️ Cancel Order", callback_data: "cancel_limit_order" }],
+          [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+        ],
+      }
+
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      })
+    } catch (error) {
+      logger.error("Error in handleLimitOrders:", error)
+      await this.bot.sendMessage(chatId, "❌ Error loading limit orders.")
+    }
+  }
+
+  // Handle DCA
+  async handleDCA(msg) {
+    const chatId = msg.chat.id
+    const telegramId = msg.from.id.toString()
+
+    try {
+      const user = await this.db.getUser(telegramId)
+      if (!user) {
+        await this.bot.sendMessage(chatId, "❌ Please start the bot first with /start")
+        return
+      }
+
+      const activeSchedules = await this.db.getActiveDCASchedules(user.id)
+
+      let message = "🔄 *Dollar Cost Averaging*\n\n"
+
+      if (activeSchedules.length > 0) {
+        message += "*Active Schedules:*\n"
+        for (const schedule of activeSchedules) {
+          const nextExec = new Date(schedule.next_execution)
+          message += `• \`${schedule.token_address.slice(0, 8)}...${schedule.token_address.slice(-6)}\`\n`
+          message += `  Amount: ${schedule.amount_eth} ETH\n`
+          message += `  Interval: ${schedule.interval_hours}h\n`
+          message += `  Next: ${nextExec.toLocaleString()}\n\n`
+        }
+      } else {
+        message += "No active DCA schedules.\n\n"
+      }
+
+      const keyboard = {
+        inline_keyboard: [
+          [{ text: "➕ Create DCA Schedule", callback_data: "create_dca" }],
+          [{ text: "🗑️ Cancel Schedule", callback_data: "cancel_dca" }],
+          [{ text: "🏠 Main Menu", callback_data: "main_menu" }],
+        ],
+      }
+
+      await this.bot.sendMessage(chatId, message, {
+        parse_mode: "Markdown",
+        reply_markup: keyboard,
+      })
+    } catch (error) {
+      logger.error("Error in handleDCA:", error)
+      await this.bot.sendMessage(chatId, "❌ Error loading DCA schedules.")
+    }
+  }
+
   // Handle callback queries (button presses)
   async handleCallbackQuery(callbackQuery) {
     const chatId = callbackQuery.message.chat.id
@@ -460,6 +557,26 @@ Configure your trading preferences:
 
         case "settings":
           await this.handleSettings({ chat: { id: chatId }, from: callbackQuery.from })
+          break
+
+        case "limit_orders":
+          await this.handleLimitOrders({ chat: { id: chatId }, from: callbackQuery.from })
+          break
+
+        case "dca":
+          await this.handleDCA({ chat: { id: chatId }, from: callbackQuery.from })
+          break
+
+        case "create_buy_limit":
+          await this.startCreateLimitOrder(chatId, telegramId, "buy")
+          break
+
+        case "create_sell_limit":
+          await this.startCreateLimitOrder(chatId, telegramId, "sell")
+          break
+
+        case "create_dca":
+          await this.startCreateDCASchedule(chatId, telegramId)
           break
 
         default:
@@ -594,6 +711,30 @@ Please send your private key (it will be encrypted and stored securely):
         case "sell_token":
           await this.processSellToken(chatId, telegramId, text, userState.percentage)
           break
+
+        case "limit_order_type":
+          await this.processLimitOrderToken(chatId, telegramId, text, userState.orderType)
+          break
+
+        case "limit_order_amount":
+          await this.processLimitOrderAmount(chatId, telegramId, text, userState.orderType, userState.tokenAddress)
+          break
+
+        case "limit_order_price":
+          await this.processLimitOrderPrice(chatId, telegramId, text, userState.orderType, userState.tokenAddress, userState.amount)
+          break
+
+        case "dca_token":
+          await this.processDCAToken(chatId, telegramId, text)
+          break
+
+        case "dca_amount":
+          await this.processDCAAmount(chatId, telegramId, text, userState.tokenAddress)
+          break
+
+        case "dca_interval":
+          await this.processDCAInterval(chatId, telegramId, text, userState.tokenAddress, userState.amount)
+          break
       }
     } catch (error) {
       logger.error("Error in handleMessage:", error)
@@ -704,6 +845,163 @@ Transaction will be processed shortly. You'll receive a confirmation once comple
 
   async processSellToken(chatId, telegramId, tokenAddress, percentage) {
     // Implementation similar to processBuyToken but for selling
+  }
+
+  // Start creating limit order
+  async startCreateLimitOrder(chatId, telegramId, orderType) {
+    this.userStates.set(telegramId, { action: "limit_order_type", orderType })
+    
+    const message = `📋 *Create ${orderType.toUpperCase()} Limit Order*\n\nPlease enter the token contract address:`
+    
+    await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" })
+  }
+
+  // Start creating DCA schedule
+  async startCreateDCASchedule(chatId, telegramId) {
+    this.userStates.set(telegramId, { action: "dca_token" })
+    
+    const message = `🔄 *Create DCA Schedule*\n\nPlease enter the token contract address:`
+    
+    await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" })
+  }
+
+  // Process limit order token address
+  async processLimitOrderToken(chatId, telegramId, tokenAddress, orderType) {
+    try {
+      if (!this.walletManager.isValidAddress(tokenAddress)) {
+        await this.bot.sendMessage(chatId, "❌ Invalid token address. Please try again.")
+        return
+      }
+
+      this.userStates.set(telegramId, { action: "limit_order_amount", orderType, tokenAddress })
+      await this.bot.sendMessage(chatId, `💰 Enter the amount of ETH for the ${orderType} order:`)
+    } catch (error) {
+      logger.error("Error processing limit order token:", error)
+      await this.bot.sendMessage(chatId, "❌ Error processing token address.")
+    }
+  }
+
+  // Process limit order amount
+  async processLimitOrderAmount(chatId, telegramId, amountText, orderType, tokenAddress) {
+    try {
+      const amount = Number.parseFloat(amountText)
+      if (isNaN(amount) || amount <= 0) {
+        await this.bot.sendMessage(chatId, "❌ Please enter a valid amount.")
+        return
+      }
+
+      this.userStates.set(telegramId, { action: "limit_order_price", orderType, tokenAddress, amount })
+      await this.bot.sendMessage(chatId, `🎯 Enter the target price in ETH for the ${orderType} order:`)
+    } catch (error) {
+      await this.bot.sendMessage(chatId, "❌ Please enter a valid number.")
+    }
+  }
+
+  // Process limit order price
+  async processLimitOrderPrice(chatId, telegramId, priceText, orderType, tokenAddress, amount) {
+    try {
+      const price = Number.parseFloat(priceText)
+      if (isNaN(price) || price <= 0) {
+        await this.bot.sendMessage(chatId, "❌ Please enter a valid price.")
+        return
+      }
+
+      const user = await this.db.getUser(telegramId)
+      if (!user) {
+        await this.bot.sendMessage(chatId, "❌ Please start the bot first with /start")
+        return
+      }
+
+      // Save limit order to database
+      await this.db.saveLimitOrder(user.id, tokenAddress, orderType, amount, price)
+
+      this.userStates.delete(telegramId)
+
+      const message = `
+✅ *Limit Order Created!*
+
+*Type:* ${orderType.toUpperCase()}
+*Token:* \`${tokenAddress}\`
+*Amount:* ${amount} ETH
+*Target Price:* ${price} ETH
+
+Your order will be executed when the market price reaches your target.
+        `
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" })
+    } catch (error) {
+      logger.error("Error creating limit order:", error)
+      await this.bot.sendMessage(chatId, "❌ Error creating limit order.")
+    }
+  }
+
+  // Process DCA token address
+  async processDCAToken(chatId, telegramId, tokenAddress) {
+    try {
+      if (!this.walletManager.isValidAddress(tokenAddress)) {
+        await this.bot.sendMessage(chatId, "❌ Invalid token address. Please try again.")
+        return
+      }
+
+      this.userStates.set(telegramId, { action: "dca_amount", tokenAddress })
+      await this.bot.sendMessage(chatId, `💰 Enter the amount of ETH to buy each time:`)
+    } catch (error) {
+      logger.error("Error processing DCA token:", error)
+      await this.bot.sendMessage(chatId, "❌ Error processing token address.")
+    }
+  }
+
+  // Process DCA amount
+  async processDCAAmount(chatId, telegramId, amountText, tokenAddress) {
+    try {
+      const amount = Number.parseFloat(amountText)
+      if (isNaN(amount) || amount <= 0) {
+        await this.bot.sendMessage(chatId, "❌ Please enter a valid amount.")
+        return
+      }
+
+      this.userStates.set(telegramId, { action: "dca_interval", tokenAddress, amount })
+      await this.bot.sendMessage(chatId, `⏰ Enter the interval in hours between purchases:`)
+    } catch (error) {
+      await this.bot.sendMessage(chatId, "❌ Please enter a valid number.")
+    }
+  }
+
+  // Process DCA interval
+  async processDCAInterval(chatId, telegramId, intervalText, tokenAddress, amount) {
+    try {
+      const interval = Number.parseFloat(intervalText)
+      if (isNaN(interval) || interval <= 0) {
+        await this.bot.sendMessage(chatId, "❌ Please enter a valid interval.")
+        return
+      }
+
+      const user = await this.db.getUser(telegramId)
+      if (!user) {
+        await this.bot.sendMessage(chatId, "❌ Please start the bot first with /start")
+        return
+      }
+
+      // Save DCA schedule to database
+      await this.db.saveDCASchedule(user.id, tokenAddress, amount, interval)
+
+      this.userStates.delete(telegramId)
+
+      const message = `
+✅ *DCA Schedule Created!*
+
+*Token:* \`${tokenAddress}\`
+*Amount:* ${amount} ETH
+*Interval:* ${interval} hours
+
+Your DCA schedule will automatically buy ${amount} ETH worth of tokens every ${interval} hours.
+        `
+
+      await this.bot.sendMessage(chatId, message, { parse_mode: "Markdown" })
+    } catch (error) {
+      logger.error("Error creating DCA schedule:", error)
+      await this.bot.sendMessage(chatId, "❌ Error creating DCA schedule.")
+    }
   }
 }
 
