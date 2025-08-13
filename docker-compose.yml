@@ -1,0 +1,25 @@
+version: '3.8'
+
+services:
+  base-trading-bot:
+    build: .
+    container_name: base-trading-bot
+    restart: unless-stopped
+    environment:
+      - NODE_ENV=production
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN}
+      - BASE_RPC_URL=${BASE_RPC_URL}
+      - BASE_TESTNET_RPC_URL=${BASE_TESTNET_RPC_URL}
+      - BASE_WSS_URL=${BASE_WSS_URL}
+      - ENCRYPTION_KEY=${ENCRYPTION_KEY}
+      - TESTNET_MODE=${TESTNET_MODE:-true}
+      - DATABASE_PATH=/usr/src/app/data/bot.db
+    volumes:
+      - ./data:/usr/src/app/data
+      - ./logs:/usr/src/app/logs
+    networks:
+      - bot-network
+
+networks:
+  bot-network:
+    driver: bridge
