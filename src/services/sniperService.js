@@ -36,23 +36,40 @@ class SniperService {
       }
 
       logger.info(`Connecting to WebSocket: ${wsUrl}`)
-      this.wsProvider = new ethers.WebSocketProvider(wsUrl)
+      
+      try {
+        this.wsProvider = new ethers.WebSocketProvider(wsUrl)
 
-      // Add error handling for WebSocket provider
-      this.wsProvider.on("error", (error) => {
-        logger.error("WebSocket provider error:", error)
-      })
+        // Add error handling for WebSocket provider
+        this.wsProvider.on("error", (error) => {
+          logger.error("WebSocket provider error:", error)
+          // Don't throw the error, just log it
+        })
 
-      this.wsProvider.on("close", () => {
-        logger.warn("WebSocket connection closed")
-        if (this.isRunning) {
-          // Attempt to reconnect after a delay
-          setTimeout(() => {
-            logger.info("Attempting to reconnect WebSocket...")
-            this.start()
-          }, 5000)
-        }
-      })
+        this.wsProvider.on("close", () => {
+          logger.warn("WebSocket connection closed")
+          if (this.isRunning) {
+            // Attempt to reconnect after a delay
+            setTimeout(async () => {
+              try {
+                logger.info("Attempting to reconnect WebSocket...")
+                await this.start()
+              } catch (reconnectError) {
+                logger.error("Failed to reconnect WebSocket:", reconnectError)
+                // Don't let this crash the bot
+              }
+            }, 5000)
+          }
+        })
+
+        // Test the connection
+        await this.wsProvider.getNetwork()
+        logger.info("WebSocket connection established successfully")
+      } catch (wsError) {
+        logger.error("Failed to establish WebSocket connection:", wsError)
+        // Don't throw the error, just log it and continue without WebSocket
+        this.wsProvider = null
+      }
 
       // Initialize regular provider
       const rpcUrl = process.env.TESTNET_MODE === "true" ? process.env.BASE_TESTNET_RPC_URL : process.env.BASE_RPC_URL
@@ -94,6 +111,11 @@ class SniperService {
         return
       }
 
+      if (!this.wsProvider) {
+        logger.error("WebSocket provider not available for monitoring new pairs")
+        return
+      }
+
       const factoryAbi = [
         "event PoolCreated(address indexed token0, address indexed token1, uint24 indexed fee, int24 tickSpacing, address pool)",
       ]
@@ -108,18 +130,25 @@ class SniperService {
           await this.checkSniperTargets(token0, token1, pool)
         } catch (error) {
           logger.error("Error processing pool creation event:", error)
+          // Don't let this crash the service
         }
       })
 
       logger.info("Started monitoring for new Uniswap V3 pairs")
     } catch (error) {
       logger.error("Error monitoring new pairs:", error)
+      // Don't throw the error, just log it
     }
   }
 
   // Monitor for liquidity additions
   async monitorLiquidityAdditions() {
     try {
+      if (!this.wsProvider) {
+        logger.error("WebSocket provider not available for monitoring liquidity additions")
+        return
+      }
+
       // Monitor for Transfer events that might indicate liquidity additions
       const transferEventSignature = ethers.id("Transfer(address,address,uint256)")
 
@@ -139,6 +168,7 @@ class SniperService {
             this.addEventToQueue(log)
           } catch (error) {
             logger.error("Error in liquidity event callback:", error)
+            // Don't let this crash the service
           }
         },
       )
@@ -146,6 +176,7 @@ class SniperService {
       logger.info("Started monitoring for liquidity additions")
     } catch (error) {
       logger.error("Error monitoring liquidity additions:", error)
+      // Don't throw the error, just log it
     }
   }
 
@@ -414,6 +445,38 @@ class SniperService {
     this.eventProcessingQueue = []
     logger.info(`Cleared event queue with ${queueLength} pending events`)
     return queueLength
+  }
+
+  // Check WebSocket connection health
+  async checkWebSocketHealth() {
+    try {
+      if (!this.wsProvider) {
+        logger.warn("WebSocket provider not available")
+        return false
+      }
+
+      // Try to get network info to test connection
+      await this.wsProvider.getNetwork()
+      return true
+    } catch (error) {
+      logger.error("WebSocket health check failed:", error)
+      return false
+    }
+  }
+
+  // Restart WebSocket connection if needed
+  async restartWebSocketIfNeeded() {
+    try {
+      const isHealthy = await this.checkWebSocketHealth()
+      if (!isHealthy && this.isRunning) {
+        logger.info("WebSocket connection unhealthy, attempting restart...")
+        await this.stop()
+        await new Promise(resolve => setTimeout(resolve, 2000)) // Wait 2 seconds
+        await this.start()
+      }
+    } catch (error) {
+      logger.error("Error restarting WebSocket:", error)
+    }
   }
 }
 

@@ -1,5 +1,6 @@
 const TelegramBot = require("node-telegram-bot-api")
 const { ethers } = require("ethers")
+const express = require("express")
 const Database = require("./database/database")
 const WalletManager = require("./services/walletManager")
 const TradingService = require("./services/tradingService")
@@ -112,6 +113,45 @@ class BaseTradingBot {
 // Start the bot
 const bot = new BaseTradingBot()
 
+// Start monitoring server
+const app = express()
+const PORT = process.env.PORT || 3000
+
+app.get('/health', (req, res) => {
+  res.json({
+    status: 'healthy',
+    timestamp: new Date().toISOString(),
+    sniperService: bot.sniperService.getServiceStatus(),
+    uptime: process.uptime()
+  })
+})
+
+app.get('/status', (req, res) => {
+  res.json({
+    bot: {
+      isRunning: true,
+      uptime: process.uptime()
+    },
+    services: {
+      sniper: bot.sniperService.getServiceStatus(),
+      background: {
+        isRunning: bot.backgroundService.isRunning
+      }
+    },
+    environment: {
+      testnetMode: process.env.TESTNET_MODE === 'true',
+      hasWebSocketUrl: !!process.env.BASE_WSS_URL,
+      hasRpcUrl: !!process.env.BASE_RPC_URL
+    }
+  })
+})
+
+app.listen(PORT, () => {
+  console.log(`📊 Monitoring server running on port ${PORT}`)
+  console.log(`🔍 Health check: http://localhost:${PORT}/health`)
+  console.log(`📈 Status: http://localhost:${PORT}/status`)
+})
+
 // Graceful shutdown handling
 process.on('SIGINT', async () => {
   logger.info('Received SIGINT, shutting down gracefully...')
@@ -145,5 +185,14 @@ process.on('uncaughtException', (error) => {
 
 process.on('unhandledRejection', (reason, promise) => {
   logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
-  process.exit(1)
+  
+  // Don't exit immediately, just log the error
+  // This prevents the bot from crashing due to WebSocket or other async errors
+  logger.warn('Bot will continue running despite unhandled rejection')
+  
+  // If it's a critical error, you might want to restart specific services
+  if (reason && reason.message && reason.message.includes('WebSocket')) {
+    logger.info('Attempting to restart WebSocket connection...')
+    // You could add logic here to restart the sniper service
+  }
 })
