@@ -1,5 +1,6 @@
 const { generateReferralCode } = require("../utils/helpers")
 const logger = require("../utils/logger")
+const TokenAnalyzer = require("../services/tokenAnalyzer")
 
 class BotHandlers {
   constructor(bot, database, walletManager, tradingService, sniperService) {
@@ -8,6 +9,7 @@ class BotHandlers {
     this.walletManager = walletManager
     this.tradingService = tradingService
     this.sniperService = sniperService
+    this.tokenAnalyzer = new TokenAnalyzer()
     this.userStates = new Map() // Track user conversation states
   }
 
@@ -62,7 +64,10 @@ Your secure trading companion for Base blockchain.
             { text: "📈 PNL", callback_data: "pnl" },
           ],
           [
+            { text: "🔍 Analyze Token", callback_data: "analyze" },
             { text: "🔗 Referral", callback_data: "referral" },
+          ],
+          [
             { text: "⚙️ Settings", callback_data: "settings" },
           ],
         ],
@@ -505,6 +510,31 @@ Configure your trading preferences:
     }
   }
 
+  // Handle token analysis
+  async handleAnalyze(msg) {
+    const chatId = msg.chat.id
+    const telegramId = msg.from.id.toString()
+
+    try {
+      const user = await this.db.getUser(telegramId)
+      if (!user) {
+        await this.bot.sendMessage(chatId, "❌ Please start the bot first with /start")
+        return
+      }
+
+      this.userStates.set(telegramId, { action: "analyze_token" })
+
+      await this.bot.sendMessage(
+        chatId,
+        `🔍 *Token Analysis*\n\nPlease send the token contract address you want to analyze:`,
+        { parse_mode: "Markdown" }
+      )
+    } catch (error) {
+      logger.error("Error in handleAnalyze:", error)
+      await this.bot.sendMessage(chatId, "❌ Error starting token analysis.")
+    }
+  }
+
   // Handle callback queries (button presses)
   async handleCallbackQuery(callbackQuery) {
     const chatId = callbackQuery.message.chat.id
@@ -579,11 +609,22 @@ Configure your trading preferences:
           await this.startCreateDCASchedule(chatId, telegramId)
           break
 
+        case "analyze":
+          await this.handleAnalyze({ chat: { id: chatId }, from: callbackQuery.from })
+          break
+
+        case "cancel_buy":
+          this.userStates.delete(telegramId)
+          await this.bot.sendMessage(chatId, "❌ Buy order cancelled.")
+          break
+
         default:
           if (data.startsWith("buy_")) {
             await this.handleBuyAmount(chatId, telegramId, data)
           } else if (data.startsWith("sell_")) {
             await this.handleSellAmount(chatId, telegramId, data)
+          } else if (data.startsWith("confirm_buy_")) {
+            await this.handleBuyConfirmation(chatId, telegramId, data)
           }
           break
       }
@@ -735,6 +776,10 @@ Please send your private key (it will be encrypted and stored securely):
         case "dca_interval":
           await this.processDCAInterval(chatId, telegramId, text, userState.tokenAddress, userState.amount)
           break
+
+        case "analyze_token":
+          await this.processAnalyzeToken(chatId, telegramId, text)
+          break
       }
     } catch (error) {
       logger.error("Error in handleMessage:", error)
@@ -791,7 +836,7 @@ Your private key has been encrypted and stored securely.
     }
   }
 
-  // Process buy token
+    // Process buy token
   async processBuyToken(chatId, telegramId, tokenAddress, amount) {
     try {
       if (!this.walletManager.isValidAddress(tokenAddress)) {
@@ -807,34 +852,49 @@ Your private key has been encrypted and stored securely.
         return
       }
 
-      this.userStates.delete(telegramId)
-
+      // Show analyzing message
       await this.bot.sendMessage(
         chatId,
-        `
-🔄 *Processing Buy Order*
-
-Token: \`${tokenAddress}\`
-Amount: ${amount} ETH
-
-Please wait...
-            `,
-        { parse_mode: "Markdown" },
+        `🔍 *Analyzing token...*\n\nPlease wait while I gather information about \`${tokenAddress}\``,
+        { parse_mode: "Markdown" }
       )
 
-      // Execute the trade (this would be implemented with actual trading logic)
-      // For now, just simulate
+      // Analyze the token
+      const analysis = await this.tokenAnalyzer.analyzeToken(tokenAddress)
+      const analysisMessage = this.tokenAnalyzer.formatTokenAnalysis(analysis)
+
+      // Send token analysis
+      await this.bot.sendMessage(chatId, analysisMessage, { parse_mode: "Markdown" })
+
+      // Store the token info for potential buy
+      this.userStates.set(telegramId, { 
+        action: "confirm_buy", 
+        tokenAddress, 
+        amount,
+        analysis 
+      })
+
+      // Ask for confirmation
+      const keyboard = {
+        inline_keyboard: [
+          [
+            { text: "✅ Confirm Buy", callback_data: `confirm_buy_${tokenAddress}` },
+            { text: "❌ Cancel", callback_data: "cancel_buy" }
+          ]
+        ]
+      }
+
       await this.bot.sendMessage(
         chatId,
-        `
-✅ *Buy Order Submitted*
-
-Transaction will be processed shortly. You'll receive a confirmation once completed.
-            `,
+        `💰 **Buy Confirmation**\n\nAmount: ${amount} ETH\n\nDo you want to proceed with this purchase?`,
+        { 
+          parse_mode: "Markdown",
+          reply_markup: keyboard
+        }
       )
     } catch (error) {
       logger.error("Error processing buy token:", error)
-      await this.bot.sendMessage(chatId, "❌ Error processing buy order.")
+      await this.bot.sendMessage(chatId, "❌ Error analyzing token. Please try again.")
     }
   }
 
@@ -1001,6 +1061,111 @@ Your DCA schedule will automatically buy ${amount} ETH worth of tokens every ${i
     } catch (error) {
       logger.error("Error creating DCA schedule:", error)
       await this.bot.sendMessage(chatId, "❌ Error creating DCA schedule.")
+    }
+  }
+
+  // Handle buy confirmation
+  async handleBuyConfirmation(chatId, telegramId, data) {
+    try {
+      const tokenAddress = data.replace("confirm_buy_", "")
+      const userState = this.userStates.get(telegramId)
+
+      if (!userState || userState.action !== "confirm_buy") {
+        await this.bot.sendMessage(chatId, "❌ No pending buy order found.")
+        return
+      }
+
+      const user = await this.db.getUser(telegramId)
+      const wallet = await this.db.getActiveWallet(user.id)
+
+      if (!wallet) {
+        await this.bot.sendMessage(chatId, "❌ No wallet found. Please create or import a wallet first.")
+        return
+      }
+
+      // Show processing message
+      await this.bot.sendMessage(
+        chatId,
+        `🔄 *Processing Buy Order*\n\nToken: \`${tokenAddress}\`\nAmount: ${userState.amount} ETH\n\nPlease wait...`,
+        { parse_mode: "Markdown" }
+      )
+
+      // Execute the trade (simulated for now)
+      const walletInstance = this.walletManager.createWalletFromEncrypted(wallet.encrypted_private_key)
+      const result = await this.tradingService.buyToken(walletInstance, tokenAddress, userState.amount)
+
+      if (result.success) {
+        // Save trade to database
+        await this.db.saveTrade(
+          user.id,
+          wallet.address,
+          tokenAddress,
+          "buy",
+          userState.amount,
+          0, // amount_tokens would be calculated
+          0, // price would be current market price
+          result.gasUsed,
+          result.txHash,
+          result.status
+        )
+
+        const successMessage = `
+✅ *Buy Order Executed Successfully!*
+
+*Token:* \`${tokenAddress}\`
+*Amount:* ${userState.amount} ETH
+*Transaction:* \`${result.txHash}\`
+*Gas Used:* ${result.gasUsed}
+
+Your tokens have been purchased and sent to your wallet!
+        `
+
+        await this.bot.sendMessage(chatId, successMessage, { parse_mode: "Markdown" })
+      } else {
+        await this.bot.sendMessage(
+          chatId,
+          `❌ *Buy Order Failed*\n\nError: ${result.error}\n\nPlease try again or contact support.`,
+          { parse_mode: "Markdown" }
+        )
+      }
+
+      // Clear user state
+      this.userStates.delete(telegramId)
+    } catch (error) {
+      logger.error("Error handling buy confirmation:", error)
+      await this.bot.sendMessage(chatId, "❌ Error executing buy order. Please try again.")
+      this.userStates.delete(telegramId)
+    }
+  }
+
+  // Process analyze token
+  async processAnalyzeToken(chatId, telegramId, tokenAddress) {
+    try {
+      if (!this.walletManager.isValidAddress(tokenAddress)) {
+        await this.bot.sendMessage(chatId, "❌ Invalid token address. Please try again.")
+        return
+      }
+
+      // Show analyzing message
+      await this.bot.sendMessage(
+        chatId,
+        `🔍 *Analyzing token...*\n\nPlease wait while I gather information about \`${tokenAddress}\``,
+        { parse_mode: "Markdown" }
+      )
+
+      // Analyze the token
+      const analysis = await this.tokenAnalyzer.analyzeToken(tokenAddress)
+      const analysisMessage = this.tokenAnalyzer.formatTokenAnalysis(analysis)
+
+      // Send token analysis
+      await this.bot.sendMessage(chatId, analysisMessage, { parse_mode: "Markdown" })
+
+      // Clear user state
+      this.userStates.delete(telegramId)
+    } catch (error) {
+      logger.error("Error processing analyze token:", error)
+      await this.bot.sendMessage(chatId, "❌ Error analyzing token. Please try again.")
+      this.userStates.delete(telegramId)
     }
   }
 }

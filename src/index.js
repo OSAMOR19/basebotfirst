@@ -44,11 +44,23 @@ class BaseTradingBot {
       // Setup bot handlers
       this.setupHandlers()
 
-      // Start sniper service
-      await this.sniperService.start()
+      // Start sniper service with error handling
+      try {
+        await this.sniperService.start()
+        logger.info("Sniper service started successfully")
+      } catch (sniperError) {
+        logger.error("Failed to start sniper service:", sniperError)
+        logger.warn("Bot will continue without sniper functionality")
+      }
 
       // Start background service for limit orders and DCA
-      await this.backgroundService.start()
+      try {
+        await this.backgroundService.start()
+        logger.info("Background service started successfully")
+      } catch (backgroundError) {
+        logger.error("Failed to start background service:", backgroundError)
+        logger.warn("Bot will continue without background services")
+      }
 
       logger.info("Base Trading Bot initialized successfully")
       console.log("🚀 Base Trading Bot is running...")
@@ -80,6 +92,7 @@ class BaseTradingBot {
     this.bot.onText(/\/sniper/, this.handlers.handleSniper.bind(this.handlers))
     this.bot.onText(/\/limit/, this.handlers.handleLimitOrders.bind(this.handlers))
     this.bot.onText(/\/dca/, this.handlers.handleDCA.bind(this.handlers))
+    this.bot.onText(/\/analyze/, this.handlers.handleAnalyze.bind(this.handlers))
     this.bot.onText(/\/ref/, this.handlers.handleReferral.bind(this.handlers))
     this.bot.onText(/\/settings/, this.handlers.handleSettings.bind(this.handlers))
 
@@ -97,4 +110,40 @@ class BaseTradingBot {
 }
 
 // Start the bot
-new BaseTradingBot()
+const bot = new BaseTradingBot()
+
+// Graceful shutdown handling
+process.on('SIGINT', async () => {
+  logger.info('Received SIGINT, shutting down gracefully...')
+  try {
+    await bot.sniperService.stop()
+    await bot.backgroundService.stop()
+    process.exit(0)
+  } catch (error) {
+    logger.error('Error during shutdown:', error)
+    process.exit(1)
+  }
+})
+
+process.on('SIGTERM', async () => {
+  logger.info('Received SIGTERM, shutting down gracefully...')
+  try {
+    await bot.sniperService.stop()
+    await bot.backgroundService.stop()
+    process.exit(0)
+  } catch (error) {
+    logger.error('Error during shutdown:', error)
+    process.exit(1)
+  }
+})
+
+// Handle uncaught exceptions
+process.on('uncaughtException', (error) => {
+  logger.error('Uncaught Exception:', error)
+  process.exit(1)
+})
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.error('Unhandled Rejection at:', promise, 'reason:', reason)
+  process.exit(1)
+})
