@@ -11,19 +11,27 @@
     "test:watch": "nodemon test-bot.js"
   },
   "dependencies": {
-    "node-telegram-bot-api": "^0.64.0",
-    "ethers": "^6.8.1",
-    "sqlite3": "^5.1.6",
-    "crypto-js": "^4.2.0",
     "axios": "^1.6.0",
+    "crypto-js": "^4.2.0",
     "dotenv": "^16.3.1",
+    "ethers": "^6.8.1",
+    "express": "^5.1.0",
     "node-cron": "^3.0.3",
+    "node-telegram-bot-api": "^0.64.0",
+    "sqlite3": "^5.1.6",
     "winston": "^3.11.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.1"
   },
-  "keywords": ["telegram", "bot", "base", "blockchain", "trading", "defi"],
+  "keywords": [
+    "telegram",
+    "bot",
+    "base",
+    "blockchain",
+    "trading",
+    "defi"
+  ],
   "author": "Base Trading Bot",
   "license": "MIT"
 }

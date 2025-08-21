@@ -1,6 +1,5 @@
 const TelegramBot = require("node-telegram-bot-api")
 const { ethers } = require("ethers")
-const express = require("express")
 const Database = require("./database/database")
 const WalletManager = require("./services/walletManager")
 const TradingService = require("./services/tradingService")
@@ -113,44 +112,9 @@ class BaseTradingBot {
 // Start the bot
 const bot = new BaseTradingBot()
 
-// Start monitoring server
-const app = express()
-const PORT = process.env.PORT || 3000
-
-app.get('/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    sniperService: bot.sniperService.getServiceStatus(),
-    uptime: process.uptime()
-  })
-})
-
-app.get('/status', (req, res) => {
-  res.json({
-    bot: {
-      isRunning: true,
-      uptime: process.uptime()
-    },
-    services: {
-      sniper: bot.sniperService.getServiceStatus(),
-      background: {
-        isRunning: bot.backgroundService.isRunning
-      }
-    },
-    environment: {
-      testnetMode: process.env.TESTNET_MODE === 'true',
-      hasWebSocketUrl: !!process.env.BASE_WSS_URL,
-      hasRpcUrl: !!process.env.BASE_RPC_URL
-    }
-  })
-})
-
-app.listen(PORT, () => {
-  console.log(`📊 Monitoring server running on port ${PORT}`)
-  console.log(`🔍 Health check: http://localhost:${PORT}/health`)
-  console.log(`📈 Status: http://localhost:${PORT}/status`)
-})
+// Log bot status
+console.log(`📊 Bot Status: Running`)
+console.log(`🔍 Use the health-check.js script to monitor the bot`)
 
 // Graceful shutdown handling
 process.on('SIGINT', async () => {
