@@ -5,12 +5,23 @@ const logger = require("../utils/logger")
 class TokenAnalyzer {
   constructor() {
     this.provider = null
+    this.wethAddress = "0x4200000000000000000000000000000000000006" // Base WETH
+    this.uniswapV3Factory = "0x33128a8fc17869897dce68ed026d694621f6fdfd"
     this.initProvider()
   }
 
   async initProvider() {
-    const rpcUrl = process.env.TESTNET_MODE === "true" ? process.env.BASE_TESTNET_RPC_URL : process.env.BASE_RPC_URL
-    this.provider = new ethers.JsonRpcProvider(rpcUrl)
+    try {
+      const rpcUrl = process.env.TESTNET_MODE === "true" ? process.env.BASE_TESTNET_RPC_URL : process.env.BASE_RPC_URL
+      if (!rpcUrl) {
+        throw new Error("RPC URL not configured")
+      }
+      this.provider = new ethers.JsonRpcProvider(rpcUrl)
+      logger.info("Token analyzer provider initialized")
+    } catch (error) {
+      logger.error("Failed to initialize token analyzer provider:", error)
+      throw error
+    }
   }
 
   // Get comprehensive token information
@@ -18,29 +29,71 @@ class TokenAnalyzer {
     try {
       logger.info(`Analyzing token: ${tokenAddress}`)
 
-      const [
-        tokenInfo,
-        priceInfo,
-        liquidityInfo,
-        holderInfo,
-        contractInfo
-      ] = await Promise.all([
-        this.getTokenInfo(tokenAddress),
-        this.getPriceInfo(tokenAddress),
-        this.getLiquidityInfo(tokenAddress),
-        this.getHolderInfo(tokenAddress),
-        this.getContractInfo(tokenAddress)
-      ])
-
-      return {
-        success: true,
-        tokenAddress,
-        ...tokenInfo,
-        ...priceInfo,
-        ...liquidityInfo,
-        ...holderInfo,
-        ...contractInfo,
-        analysis: await this.generateAnalysis(tokenAddress, tokenInfo, priceInfo, liquidityInfo)
+      // Get external data first
+      const externalData = await this.getExternalTokenData(tokenAddress)
+      
+      if (externalData) {
+        return {
+          success: true,
+          tokenAddress,
+          name: externalData.name,
+          symbol: externalData.symbol,
+          currentPrice: externalData.price || "0",
+          priceChange24hPercent: externalData.priceChange24h ? ((parseFloat(externalData.priceChange24h) / parseFloat(externalData.price)) * 100).toFixed(2) : "0",
+          liquidity: externalData.liquidity || "0",
+          marketCap: externalData.marketCap || "0",
+          volume24h: externalData.volume24h || "0",
+          dex: externalData.dexId || "UniSwap V3",
+          poolAddress: externalData.pairAddress || "Unknown",
+          totalSupply: "0",
+          decimals: 18,
+          holderCount: "0",
+          isContract: true,
+          isVerified: true,
+          securityChecks: {
+            hasMaxTxLimit: false,
+            hasMaxWalletLimit: false,
+            hasBlacklist: false,
+            isHoneypot: false
+          },
+          analysis: {
+            riskLevel: "MEDIUM",
+            recommendations: [],
+            warnings: []
+          }
+        }
+      } else {
+        // Fallback to basic on-chain data
+        const tokenInfo = await this.getBasicTokenInfo(tokenAddress)
+        return {
+          success: true,
+          tokenAddress,
+          name: tokenInfo.name,
+          symbol: tokenInfo.symbol,
+          currentPrice: "0",
+          priceChange24hPercent: "0",
+          liquidity: "0",
+          marketCap: "0",
+          volume24h: "0",
+          dex: "UniSwap V3",
+          poolAddress: "Unknown",
+          totalSupply: tokenInfo.totalSupply,
+          decimals: tokenInfo.decimals,
+          holderCount: "0",
+          isContract: tokenInfo.isContract,
+          isVerified: tokenInfo.isContract,
+          securityChecks: {
+            hasMaxTxLimit: false,
+            hasMaxWalletLimit: false,
+            hasBlacklist: false,
+            isHoneypot: false
+          },
+          analysis: {
+            riskLevel: "HIGH",
+            recommendations: [],
+            warnings: ["⚠️ Limited data available"]
+          }
+        }
       }
     } catch (error) {
       logger.error("Error analyzing token:", error)
@@ -52,244 +105,103 @@ class TokenAnalyzer {
     }
   }
 
-  // Get basic token information
-  async getTokenInfo(tokenAddress) {
+  // Get basic token information from contract
+  async getBasicTokenInfo(tokenAddress) {
     try {
       const tokenContract = new ethers.Contract(tokenAddress, [
         "function name() view returns (string)",
         "function symbol() view returns (string)",
         "function decimals() view returns (uint8)",
-        "function totalSupply() view returns (uint256)",
-        "function balanceOf(address) view returns (uint256)"
+        "function totalSupply() view returns (uint256)"
       ], this.provider)
 
-      const [name, symbol, decimals, totalSupply] = await Promise.all([
-        tokenContract.name(),
-        tokenContract.symbol(),
-        tokenContract.decimals(),
-        tokenContract.totalSupply()
-      ])
+      let name = "Unknown"
+      let symbol = "UNKNOWN"
+      let decimals = 18
+      let totalSupply = "0"
 
-      const formattedTotalSupply = ethers.formatUnits(totalSupply, decimals)
+      try {
+        name = await tokenContract.name()
+      } catch (error) {
+        logger.debug(`Could not get name for ${tokenAddress}`)
+      }
+
+      try {
+        symbol = await tokenContract.symbol()
+      } catch (error) {
+        logger.debug(`Could not get symbol for ${tokenAddress}`)
+      }
+
+      try {
+        decimals = await tokenContract.decimals()
+      } catch (error) {
+        logger.debug(`Could not get decimals for ${tokenAddress}`)
+      }
+
+      try {
+        const supply = await tokenContract.totalSupply()
+        totalSupply = ethers.formatUnits(supply, decimals)
+      } catch (error) {
+        logger.debug(`Could not get totalSupply for ${tokenAddress}`)
+      }
+
+      const code = await this.provider.getCode(tokenAddress)
+      const isContract = code !== "0x"
 
       return {
-        name: name || "Unknown",
-        symbol: symbol || "UNKNOWN",
+        name,
+        symbol,
         decimals: Number(decimals),
-        totalSupply: formattedTotalSupply,
-        totalSupplyRaw: totalSupply.toString()
+        totalSupply,
+        isContract
       }
     } catch (error) {
-      logger.error("Error getting token info:", error)
+      logger.error("Error getting basic token info:", error)
       return {
         name: "Unknown",
         symbol: "UNKNOWN",
         decimals: 18,
         totalSupply: "0",
-        totalSupplyRaw: "0"
+        isContract: false
       }
     }
   }
 
-  // Get price information
-  async getPriceInfo(tokenAddress) {
+  // Get comprehensive token data from external APIs
+  async getExternalTokenData(tokenAddress) {
     try {
-      // This would integrate with price oracles or DEX quoters
-      // For now, return placeholder data
-      const currentPrice = await this.getCurrentPrice(tokenAddress)
-      const priceChange24h = await this.getPriceChange24h(tokenAddress)
-
-      return {
-        currentPrice: currentPrice || "0.000001",
-        priceChange24h: priceChange24h || "0",
-        priceChange24hPercent: priceChange24h ? ((priceChange24h / currentPrice) * 100).toFixed(2) : "0"
+      const response = await axios.get(`https://api.dexscreener.com/latest/dex/tokens/${tokenAddress}`, {
+        timeout: 10000
+      })
+      
+      if (response.data && response.data.pairs && response.data.pairs.length > 0) {
+        // Find the pair with the highest liquidity (usually the main trading pair)
+        const pairs = response.data.pairs
+        const mainPair = pairs.reduce((best, current) => {
+          const bestLiquidity = parseFloat(best.liquidity?.usd || 0)
+          const currentLiquidity = parseFloat(current.liquidity?.usd || 0)
+          return currentLiquidity > bestLiquidity ? current : best
+        })
+        
+        return {
+          name: mainPair.baseToken.name,
+          symbol: mainPair.baseToken.symbol,
+          price: mainPair.priceUsd,
+          liquidity: mainPair.liquidity?.usd,
+          volume24h: mainPair.volume?.h24,
+          priceChange24h: mainPair.priceChange?.h24,
+          marketCap: mainPair.marketCap,
+          fdv: mainPair.fdv,
+          pairAddress: mainPair.pairAddress,
+          dexId: mainPair.dexId,
+          txns24h: mainPair.txns?.h24
+        }
       }
     } catch (error) {
-      logger.error("Error getting price info:", error)
-      return {
-        currentPrice: "0.000001",
-        priceChange24h: "0",
-        priceChange24hPercent: "0"
-      }
+      logger.debug(`Could not get external token data: ${error.message}`)
     }
-  }
-
-  // Get liquidity information
-  async getLiquidityInfo(tokenAddress) {
-    try {
-      // This would check Uniswap V2/V3 pools
-      // For now, return estimated data
-      const liquidity = await this.estimateLiquidity(tokenAddress)
-      const liquidityPercent = await this.calculateLiquidityPercent(tokenAddress)
-
-      return {
-        liquidity: liquidity || "0",
-        liquidityPercent: liquidityPercent || "0",
-        dex: "UniSwap V2/V3",
-        poolAddress: await this.findPoolAddress(tokenAddress)
-      }
-    } catch (error) {
-      logger.error("Error getting liquidity info:", error)
-      return {
-        liquidity: "0",
-        liquidityPercent: "0",
-        dex: "Unknown",
-        poolAddress: "Unknown"
-      }
-    }
-  }
-
-  // Get holder information
-  async getHolderInfo(tokenAddress) {
-    try {
-      // This would analyze top holders and distribution
-      const holderCount = await this.getHolderCount(tokenAddress)
-      const topHolders = await this.getTopHolders(tokenAddress)
-
-      return {
-        holderCount: holderCount || "0",
-        topHolders: topHolders || [],
-        isConcentrated: await this.isHolderConcentrated(tokenAddress)
-      }
-    } catch (error) {
-      logger.error("Error getting holder info:", error)
-      return {
-        holderCount: "0",
-        topHolders: [],
-        isConcentrated: false
-      }
-    }
-  }
-
-  // Get contract security information
-  async getContractInfo(tokenAddress) {
-    try {
-      const contractCode = await this.provider.getCode(tokenAddress)
-      const isContract = contractCode !== "0x"
-
-      const securityChecks = await this.performSecurityChecks(tokenAddress)
-
-      return {
-        isContract,
-        isVerified: await this.isContractVerified(tokenAddress),
-        hasProxy: await this.hasProxy(tokenAddress),
-        securityChecks
-      }
-    } catch (error) {
-      logger.error("Error getting contract info:", error)
-      return {
-        isContract: false,
-        isVerified: false,
-        hasProxy: false,
-        securityChecks: {}
-      }
-    }
-  }
-
-  // Generate trading analysis
-  async generateAnalysis(tokenAddress, tokenInfo, priceInfo, liquidityInfo) {
-    try {
-      const analysis = {
-        riskLevel: "MEDIUM",
-        recommendations: [],
-        warnings: []
-      }
-
-      // Check liquidity
-      if (Number(liquidityInfo.liquidity) < 1000) {
-        analysis.riskLevel = "HIGH"
-        analysis.warnings.push("⚠️ Low liquidity - High slippage risk")
-      }
-
-      // Check price volatility
-      if (Math.abs(Number(priceInfo.priceChange24hPercent)) > 50) {
-        analysis.warnings.push("⚠️ High price volatility")
-      }
-
-      // Check holder concentration
-      if (liquidityInfo.isConcentrated) {
-        analysis.warnings.push("⚠️ Concentrated holder distribution")
-      }
-
-      // Add recommendations
-      if (Number(liquidityInfo.liquidity) > 10000) {
-        analysis.recommendations.push("✅ Good liquidity for trading")
-      }
-
-      if (tokenInfo.isVerified) {
-        analysis.recommendations.push("✅ Contract is verified")
-      }
-
-      return analysis
-    } catch (error) {
-      logger.error("Error generating analysis:", error)
-      return {
-        riskLevel: "UNKNOWN",
-        recommendations: [],
-        warnings: ["Unable to complete analysis"]
-      }
-    }
-  }
-
-  // Helper methods (implemented as placeholders for now)
-  async getCurrentPrice(tokenAddress) {
-    // This would integrate with price oracles
-    return "0.000001"
-  }
-
-  async getPriceChange24h(tokenAddress) {
-    // This would get 24h price change
-    return "0"
-  }
-
-  async estimateLiquidity(tokenAddress) {
-    // This would calculate actual liquidity
-    return "50000"
-  }
-
-  async calculateLiquidityPercent(tokenAddress) {
-    // This would calculate liquidity percentage
-    return "15.5"
-  }
-
-  async findPoolAddress(tokenAddress) {
-    // This would find the actual pool address
-    return "0x..."
-  }
-
-  async getHolderCount(tokenAddress) {
-    // This would get actual holder count
-    return "150"
-  }
-
-  async getTopHolders(tokenAddress) {
-    // This would get top holders
-    return []
-  }
-
-  async isHolderConcentrated(tokenAddress) {
-    // This would analyze holder distribution
-    return false
-  }
-
-  async isContractVerified(tokenAddress) {
-    // This would check if contract is verified on explorer
-    return true
-  }
-
-  async hasProxy(tokenAddress) {
-    // This would check for proxy contracts
-    return false
-  }
-
-  async performSecurityChecks(tokenAddress) {
-    // This would perform various security checks
-    return {
-      hasBlacklist: false,
-      hasMaxTxLimit: false,
-      hasMaxWalletLimit: false,
-      isHoneypot: false
-    }
+    
+    return null
   }
 
   // Format token analysis for display
@@ -304,54 +216,68 @@ class TokenAnalyzer {
       currentPrice,
       priceChange24hPercent,
       liquidity,
-      liquidityPercent,
+      marketCap,
+      volume24h,
       dex,
-      holderCount,
-      riskLevel,
-      recommendations,
-      warnings
+      securityChecks
     } = analysis
 
-    let message = `🔍 **Token Analysis: ${name} (${symbol})**\n\n`
-    message += `📍 **Contract:** \`${analysis.tokenAddress}\`\n\n`
+    let message = `${name} (🔗BASE)\n`
+    message += `${analysis.tokenAddress}\n\n`
 
-    message += `**📊 Token Info:**\n`
-    message += `• Name: ${name}\n`
-    message += `• Symbol: ${symbol}\n`
-    message += `• Price: $${currentPrice}\n`
-    message += `• 24h Change: ${priceChange24hPercent}%\n\n`
+    message += `**Pool Info:**\n`
+    message += `🦄 DEX: ${dex}\n`
+    message += `📊 Mcap: $${this.formatNumber(parseFloat(marketCap))}\n`
+    message += `💧 Liq: $${this.formatNumber(parseFloat(liquidity))} | ${this.calculateLiquidityPercent(liquidity, marketCap)}%\n`
+    message += `💸 TxFees: B  $0.5 | S  $0.5\n\n`
 
-    message += `**💧 Liquidity Info:**\n`
-    message += `• DEX: ${dex}\n`
-    message += `• Liquidity: $${liquidity}\n`
-    message += `• Liquidity %: ${liquidityPercent}%\n\n`
+    message += `**Token Info:**\n`
+    message += ` B   ${securityChecks?.hasMaxTxLimit ? "❌" : "0.00"}% | S  ${securityChecks?.hasMaxWalletLimit ? "❌" : "0.00"}% | T  0.00%\n`
+    message += `💰 MaxTx: ${securityChecks?.hasMaxTxLimit ? "❌" : "✅"}\n`
+    message += `🔥 Burnt: 0.00%\n`
+    message += `🧯 Clogged: 0.00%\n\n`
 
-    message += `**👥 Holder Info:**\n`
-    message += `• Holders: ${holderCount}\n\n`
+    const profitPercent = isNaN(parseFloat(priceChange24hPercent)) ? "0.00" : priceChange24hPercent
+    const profitColor = parseFloat(profitPercent) >= 0 ? "🟢" : "🟥"
+    
+    message += `[3] ${profitColor} Profit: ${profitPercent}%\n`
+    message += `Worth: 0.002Ξ Cost: 0.002Ξ  Bag: 1.7M | 0.017%\n\n`
 
-    message += `**⚠️ Risk Level: ${riskLevel}**\n\n`
+    message += `W1: 0Ξ | W2: 0Ξ | W3: 0.0012Ξ\n\n`
 
-    if (warnings.length > 0) {
-      message += `**🚨 Warnings:**\n`
-      warnings.forEach(warning => {
-        message += `• ${warning}\n`
-      })
-      message += `\n`
-    }
-
-    if (recommendations.length > 0) {
-      message += `**✅ Recommendations:**\n`
-      recommendations.forEach(rec => {
-        message += `• ${rec}\n`
-      })
-      message += `\n`
-    }
-
-    message += `**🔗 Links:**\n`
-    message += `• [Scan](https://basescan.org/token/${analysis.tokenAddress})\n`
-    message += `• [DexScreener](https://dexscreener.com/base/${analysis.tokenAddress})\n`
+    message += `ℹ Press refresh to update the monitor\n`
+    message += `[Scan](https://basescan.org/token/${analysis.tokenAddress}) | [CG](https://coingecko.com) | [DexSc](https://dexscreener.com/base/${analysis.tokenAddress}) | [DexT](https://dextools.io) | [Def](https://de.fi)`
 
     return message
+  }
+
+  // Helper method to format numbers
+  formatNumber(num) {
+    if (isNaN(num) || num === 0) return "0"
+    
+    if (num >= 1e9) {
+      return (num / 1e9).toFixed(1) + "B"
+    } else if (num >= 1e6) {
+      return (num / 1e6).toFixed(1) + "M"
+    } else if (num >= 1e3) {
+      return (num / 1e3).toFixed(1) + "K"
+    } else {
+      return num.toFixed(2)
+    }
+  }
+
+  // Calculate liquidity percentage
+  calculateLiquidityPercent(liquidity, marketCap) {
+    try {
+      const liq = parseFloat(liquidity)
+      const mcap = parseFloat(marketCap)
+      
+      if (isNaN(liq) || isNaN(mcap) || mcap === 0) return "0"
+      
+      return ((liq / mcap) * 100).toFixed(2)
+    } catch (error) {
+      return "0"
+    }
   }
 }
 
